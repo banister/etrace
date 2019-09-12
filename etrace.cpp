@@ -1,5 +1,8 @@
 #include <iostream>
 #include <filesystem>
+#include <fstream>
+#include <ios>
+#include <string>
 #include <linux/netlink.h>
 #include <linux/cn_proc.h>
 #include <linux/connector.h>
@@ -8,7 +11,8 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <unistd.h>
-#include "eTrace.h"
+#include <string.h>
+#include "etrace.h"
 
 namespace fs = std::filesystem;
 
@@ -44,21 +48,22 @@ void ETrace::showError(const std::string &funcName)
 }
 
 // Given a pid, return the launch path for the process
-fs::path ETrace::pathForPid(pid_t pid)
+std::string ETrace::pathForPid(pid_t pid)
 {
-    std::ostringstream path
-            stringStream
-        << "/proc/" << pid << "/exe";
-    return fs::read_symlink(path.str());
+    std::ostringstream pathStream;
+    pathStream << "/proc/" << pid << "/exe";
+
+    fs::path path { pathStream.str() };
+    return fs::read_symlink(path);
 }
 
-std::string ETrace::cmdLineforPid(pid_t pid)
+std::string ETrace::cmdLineForPid(pid_t pid)
 {
     std::ostringstream path;
     path << "/proc/" << pid << "/cmdline";
 
-    char cmdLine[1024] = {0};
-    std::fstream file{path.str(), ios::.binary | ios::in};
+    char cmdLine[1024] = {};
+    std::fstream file{path.str(), std::ios::binary | std::ios::in};
     file.read(cmdLine, sizeof(cmdLine));
 
     for (int i = 0; i < sizeof(cmdLine); ++i)
@@ -72,17 +77,19 @@ bool ETrace::start()
 {
     initiateConnection();
     startReadLoop();
-    teardown();
+
+    return true;
 }
+
 bool ETrace::initiateConnection()
 {
     int sock;
-    std::cerr << "Attempting to connect to Netlink";
+    std::cerr << "Attempting to connect to Netlink" << std::endl;
 
     if (_sockFd != -1)
     {
-        std::cerr << "Existing connection already exists, disconnecting first";
-        shutdownConnection();
+        std::cerr << "Existing connection already exists, disconnecting first" << std::endl;
+        teardown();
     }
 
     // Set SOCK_CLOEXEC to prevent socket being inherited by child processes (such as openvpn)
@@ -99,7 +106,7 @@ bool ETrace::initiateConnection()
     address.nl_groups = CN_IDX_PROC;
     address.nl_family = AF_NETLINK;
 
-    if (::bind(sock, reinterpret_cast<sockaddr *>(&address), sizeof(sockaddr_nl)) == -1)
+    if (::bind(sock, reinterpret_cast<sockaddr*>(&address), sizeof(sockaddr_nl)) == -1)
     {
         showError("::bind");
         ::close(sock);
@@ -108,17 +115,17 @@ bool ETrace::initiateConnection()
 
     if (subscribeToProcEvents(sock, true) == -1)
     {
-        std::cerr << "Could not subscribe to proc events";
+        std::cerr << "Could not subscribe to proc events" << std::endl;
         ::close(sock);
         return false;
     }
 
-    std::cerr << "Successfully connected to Netlink";
+    std::cerr << "Successfully connected to Netlink" << std::endl;
 
     // Save the socket FD to an ivar
     _sockFd = sock;
 
-    auto sigHandler = [](int) { std::cout << "Ending program"; stop = 1; }
+    auto sigHandler = [](int) { std::cout << "Ending program" << std::endl; stop = 1; };
     ::signal(SIGINT, sigHandler);
     ::signal(SIGTERM, sigHandler);
 }
@@ -146,21 +153,21 @@ bool ETrace::subscribeToProcEvents(int sock, bool enabled)
     return true;
 }
 
-ETrace::teardown()
+void ETrace::teardown()
 {
-    std::cerr << "Attempting to disconnect from Netlink";
+    std::cerr << "Attempting to disconnect from Netlink" << std::endl;
 
     if (_sockFd != -1)
     {
         // Unsubscribe from proc events
         subscribeToProcEvents(_sockFd, false);
-        if (::close(_sockFd) != 0)
+        if(::close(_sockFd) != 0)
             showError("::close");
     }
 
     _sockFd = -1;
 
-    std::cerr << "Successfully disconnected from Netlink";
+    std::cerr << "Successfully disconnected from Netlink" << std::endl;
 }
 
 ETrace::~ETrace()
@@ -170,7 +177,7 @@ ETrace::~ETrace()
 
 void ETrace::startReadLoop()
 {
-    whie(!stop)
+    while(!stop)
     {
         NetlinkResponse message = {};
         ::recv(_sockFd, &message, sizeof(message), 0);
@@ -179,12 +186,12 @@ void ETrace::startReadLoop()
         const auto &eventData = message.event.event_data;
 
         pid_t pid;
-        std::string appName;
+        std::string appName, cmdLine;
 
         switch (message.event.what)
         {
         case proc_event::PROC_EVENT_NONE:
-            std::cerr << "Listening to process events";
+            std::cerr << "Listening to process events" << std::endl;
             break;
         case proc_event::PROC_EVENT_EXEC:
             pid = eventData.exec.process_pid;
@@ -193,7 +200,7 @@ void ETrace::startReadLoop()
             appName = pathForPid(pid);
             cmdLine = cmdLineForPid(pid);
 
-            cout << "[" << pid << "] " << cmdLine;
+            std:: cout << "[" << pid << "] " << cmdLine << std::endl;
             break;
         case proc_event::PROC_EVENT_EXIT:
             pid = eventData.exit.process_pid;
