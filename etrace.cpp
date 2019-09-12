@@ -1,6 +1,7 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <ios>
 #include <string>
 #include <linux/netlink.h>
@@ -62,13 +63,11 @@ std::string ETrace::cmdLineForPid(pid_t pid)
     std::ostringstream path;
     path << "/proc/" << pid << "/cmdline";
 
-    char cmdLine[1024] = {};
-    std::fstream file{path.str(), std::ios::binary | std::ios::in};
-    file.read(cmdLine, sizeof(cmdLine));
+    std::string cmdLine;
+    std::fstream file{path.str(), std::ios::in};
+    std::getline(file, cmdLine);
 
-    for (int i = 0; i < sizeof(cmdLine); ++i)
-        if (cmdLine[i] == 0)
-            cmdLine[i] = ' ';
+    std::replace(cmdLine.begin(), cmdLine.end(), '\0', ' ');
 
     return std::string{cmdLine};
 }
@@ -196,11 +195,19 @@ void ETrace::startReadLoop()
         case proc_event::PROC_EVENT_EXEC:
             pid = eventData.exec.process_pid;
 
-            // Get the launch path associated with the PID
-            appName = pathForPid(pid);
-            cmdLine = cmdLineForPid(pid);
+            try
+            {
+                // Get the launch path associated with the PID
+                appName = pathForPid(pid);
+                cmdLine = cmdLineForPid(pid);
+                std:: cout << "[" << pid << "] " << cmdLine << std::endl;
+            }
+            catch(const fs::filesystem_error&)
+            {
 
-            std:: cout << "[" << pid << "] " << cmdLine << std::endl;
+            }
+
+
             break;
         case proc_event::PROC_EVENT_EXIT:
             pid = eventData.exit.process_pid;
