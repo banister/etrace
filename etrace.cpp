@@ -1,5 +1,5 @@
 #include <iostream>
-#include <filesystem>
+#include <experimental/filesystem>
 #include <fstream>
 #include <algorithm>
 #include <ios>
@@ -15,7 +15,7 @@
 #include <string.h>
 #include "etrace.h"
 
-namespace fs = std::filesystem;
+namespace fs = std::experimental::filesystem;
 
 volatile sig_atomic_t stop;
 
@@ -74,7 +74,15 @@ std::string ETrace::cmdLineForPid(pid_t pid)
 
 bool ETrace::start()
 {
-    initiateConnection();
+    if(geteuid() != 0)
+    {
+      std::cerr << "You must be root." << std::endl;
+      return false;
+    }
+
+    if(!initiateConnection())
+      return false;
+
     startReadLoop();
 
     return true;
@@ -125,8 +133,9 @@ bool ETrace::initiateConnection()
     _sockFd = sock;
 
     auto sigHandler = [](int) { std::cout << "Ending program" << std::endl; stop = 1; };
-    ::signal(SIGINT, sigHandler);
     ::signal(SIGTERM, sigHandler);
+
+    return true;
 }
 
 bool ETrace::subscribeToProcEvents(int sock, bool enabled)
@@ -154,19 +163,20 @@ bool ETrace::subscribeToProcEvents(int sock, bool enabled)
 
 void ETrace::teardown()
 {
-    std::cerr << "Attempting to disconnect from Netlink" << std::endl;
-
     if (_sockFd != -1)
     {
+        std::cerr << "Attempting to disconnect from Netlink" << std::endl;
         // Unsubscribe from proc events
         subscribeToProcEvents(_sockFd, false);
         if(::close(_sockFd) != 0)
+        {
             showError("::close");
+            return;
+        }
+        std::cerr << "Successfully disconnected from Netlink" << std::endl;
     }
 
     _sockFd = -1;
-
-    std::cerr << "Successfully disconnected from Netlink" << std::endl;
 }
 
 ETrace::~ETrace()
@@ -219,4 +229,3 @@ void ETrace::startReadLoop()
         }
     }
 }
-
